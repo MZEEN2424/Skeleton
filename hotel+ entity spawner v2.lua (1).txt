@@ -145,7 +145,7 @@ end
 -- Run the created entity
 Creator.runEntity(entity)
 end)
-Section:NewButton("Spawn A90", "Spawn A90", function()
+Section:NewButton("Spawn A60", "Spawn A60", function()
 local entity = Creator.createEntity({
     CustomName = "Spawn A60", -- Custom name of your entity
     Model = "rbxassetid://11343127867", -- Can be GitHub file or rbxassetid
