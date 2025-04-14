@@ -1,0 +1,559 @@
+local Players = game:GetService("Players")
+local AvatarEditorService = game:GetService("AvatarEditorService")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+if not _G.OutfitRandomizerSettings then
+	_G.OutfitRandomizerSettings = {
+		Enabled = true,
+		RigType = Enum.HumanoidRigType.R6,
+		ChangeOnDeath = true,
+		LastUsedOutfitIds = {},
+		MaxHistory = 5,
+		MaxAttempts = 10,
+		GuiPosition = UDim2.new(0.5, -150, 0.5, -125),
+		GuiVisible = true
+	}
+end
+
+local function getAllOutfits(outfitPages)
+	local allOutfits = {}
+
+	local currentPage = outfitPages:GetCurrentPage()
+	for _, outfit in ipairs(currentPage) do
+		table.insert(allOutfits, outfit)
+	end
+
+	while outfitPages.IsFinished == false do
+		outfitPages:AdvanceToNextPageAsync()
+		local nextPage = outfitPages:GetCurrentPage()
+		for _, outfit in ipairs(nextPage) do
+			table.insert(allOutfits, outfit)
+		end
+	end
+
+	return allOutfits
+end
+
+local function applyRandomOutfit()
+	if not _G.OutfitRandomizerSettings.Enabled then
+		return
+	end
+
+	AvatarEditorService:PromptAllowInventoryReadAccess()
+	
+	local permissionConnection
+	permissionConnection = AvatarEditorService.PromptAllowInventoryReadAccessCompleted:Connect(function(result)
+		permissionConnection:Disconnect()
+
+		if result == Enum.AvatarPromptResult.Success then
+			local outfitPages = AvatarEditorService:GetOutfits(Enum.OutfitSource.All, Enum.OutfitType.Avatar)
+			local allOutfits = getAllOutfits(outfitPages)
+
+			if #allOutfits == 0 then
+				print("No outfits found!")
+				if _G.OutfitRandomizerUI and _G.OutfitRandomizerUI.Status then
+					_G.OutfitRandomizerUI.Status.Text = "Status: No outfits found!"
+				end
+				return
+			end
+
+			local selectedOutfit
+			local attempts = 0
+
+			repeat
+				local randomIndex = math.random(1, #allOutfits)
+				selectedOutfit = allOutfits[randomIndex]
+
+				local wasUsedRecently = false
+				for _, id in ipairs(_G.OutfitRandomizerSettings.LastUsedOutfitIds) do
+					if id == selectedOutfit.Id then
+						wasUsedRecently = true
+						break
+					end
+				end
+
+				attempts = attempts + 1
+				if not wasUsedRecently or attempts >= _G.OutfitRandomizerSettings.MaxAttempts then
+					break
+				end
+			until not wasUsedRecently or attempts >= _G.OutfitRandomizerSettings.MaxAttempts
+
+			table.insert(_G.OutfitRandomizerSettings.LastUsedOutfitIds, selectedOutfit.Id)
+			if #_G.OutfitRandomizerSettings.LastUsedOutfitIds > _G.OutfitRandomizerSettings.MaxHistory then
+				table.remove(_G.OutfitRandomizerSettings.LastUsedOutfitIds, 1)
+			end
+			local outfitDescription = Players:GetHumanoidDescriptionFromOutfitId(selectedOutfit.Id)
+			AvatarEditorService:PromptSaveAvatar(outfitDescription, _G.OutfitRandomizerSettings.RigType)
+
+			if _G.OutfitRandomizerUI and _G.OutfitRandomizerUI.Status then
+				_G.OutfitRandomizerUI.Status.Text = "Status: Applied outfit: " .. selectedOutfit.Name
+			end
+
+			print("Selected random outfit: " .. selectedOutfit.Name .. " (ID: " .. selectedOutfit.Id .. ")")
+		else
+			print("Permission denied")
+			if _G.OutfitRandomizerUI and _G.OutfitRandomizerUI.Status then
+				_G.OutfitRandomizerUI.Status.Text = "Status: Permission denied"
+			end
+		end
+	end)
+end
+
+local function setupDiedEvent(character)
+	if character and _G.OutfitRandomizerSettings.ChangeOnDeath then
+		local humanoid = character:WaitForChild("Humanoid")
+		if humanoid then
+			humanoid.Died:Connect(function()
+				print("Character died, applying random outfit on respawn")
+				if _G.OutfitRandomizerUI and _G.OutfitRandomizerUI.Status then
+					_G.OutfitRandomizerUI.Status.Text = "Status: Character died, changing outfit..."
+				end
+				task.wait(0.2)
+				applyRandomOutfit()
+			end)
+		end
+	end
+end
+
+local function createGUI()
+	if _G.OutfitRandomizerUI and _G.OutfitRandomizerUI.ScreenGui then
+		if _G.OutfitRandomizerUI.MainFrame then
+			_G.OutfitRandomizerSettings.GuiPosition = _G.OutfitRandomizerUI.MainFrame.Position
+		end
+		_G.OutfitRandomizerUI.ScreenGui:Destroy()
+	end
+
+	_G.OutfitRandomizerUI = {}
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "OutfitRandomizerGUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+	screenGui.Enabled = _G.OutfitRandomizerSettings.GuiVisible
+
+	_G.OutfitRandomizerUI.ScreenGui = screenGui
+
+	local mainFrame = Instance.new("Frame")
+	mainFrame.Name = "MainFrame"
+	mainFrame.Size = UDim2.new(0, 300, 0, 250)
+	mainFrame.Position = _G.OutfitRandomizerSettings.GuiPosition
+	mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	mainFrame.BorderSizePixel = 0
+	mainFrame.Active = true
+	mainFrame.Draggable = false 
+	mainFrame.Parent = screenGui
+	_G.OutfitRandomizerUI.MainFrame = mainFrame
+
+	local uiGradient = Instance.new("UIGradient")
+	uiGradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 20, 20)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(40, 20, 20))
+	})
+	uiGradient.Rotation = 45
+	uiGradient.Parent = mainFrame
+
+	local uiCorner = Instance.new("UICorner")
+	uiCorner.CornerRadius = UDim.new(0, 8)
+	uiCorner.Parent = mainFrame
+
+	local borderFrame = Instance.new("Frame")
+	borderFrame.Name = "Border"
+	borderFrame.Size = UDim2.new(1, 6, 1, 6)
+	borderFrame.Position = UDim2.new(0, -3, 0, -3)
+	borderFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+	borderFrame.BorderSizePixel = 0
+	borderFrame.ZIndex = 0
+	borderFrame.Parent = mainFrame
+
+	local borderCorner = Instance.new("UICorner")
+	borderCorner.CornerRadius = UDim.new(0, 10)
+	borderCorner.Parent = borderFrame
+
+	local titleBar = Instance.new("Frame")
+	titleBar.Name = "TitleBar"
+	titleBar.Size = UDim2.new(1, 0, 0, 40)
+	titleBar.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+	titleBar.BorderSizePixel = 0
+	titleBar.ZIndex = 2
+	titleBar.Parent = mainFrame
+
+	local titleCorner = Instance.new("UICorner")
+	titleCorner.CornerRadius = UDim.new(0, 8)
+	titleCorner.Parent = titleBar
+
+	local cornerFix = Instance.new("Frame")
+	cornerFix.Name = "CornerFix"
+	cornerFix.Size = UDim2.new(1, 0, 0.5, 0)
+	cornerFix.Position = UDim2.new(0, 0, 0.5, 0)
+	cornerFix.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+	cornerFix.BorderSizePixel = 0
+	cornerFix.ZIndex = 2
+	cornerFix.Parent = titleBar
+
+	local titleText = Instance.new("TextLabel")
+	titleText.Name = "Title"
+	titleText.Size = UDim2.new(1, -40, 1, 0)
+	titleText.Position = UDim2.new(0, 10, 0, 0)
+	titleText.Font = Enum.Font.GothamBold
+	titleText.Text = "Random Outfit Changer by MZEEN"
+	titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	titleText.TextSize = 16
+	titleText.TextXAlignment = Enum.TextXAlignment.Left
+	titleText.BackgroundTransparency = 1
+	titleText.ZIndex = 3
+	titleText.Parent = titleBar
+
+	local closeButton = Instance.new("TextButton")
+	closeButton.Name = "CloseButton"
+	closeButton.Size = UDim2.new(0, 30, 0, 30)
+	closeButton.Position = UDim2.new(1, -35, 0, 5)
+	closeButton.BackgroundColor3 = Color3.fromRGB(70, 0, 0)
+	closeButton.Text = "X"
+	closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.TextSize = 16
+	closeButton.ZIndex = 3
+	closeButton.Parent = titleBar
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 6)
+	closeCorner.Parent = closeButton
+
+	local contentFrame = Instance.new("Frame")
+	contentFrame.Name = "Content"
+	contentFrame.Size = UDim2.new(1, -20, 1, -50)
+	contentFrame.Position = UDim2.new(0, 10, 0, 45)
+	contentFrame.BackgroundTransparency = 1
+	contentFrame.ZIndex = 2
+	contentFrame.Parent = mainFrame
+
+	local enableToggle = Instance.new("Frame")
+	enableToggle.Name = "EnableToggle"
+	enableToggle.Size = UDim2.new(0, 40, 0, 20)
+	enableToggle.Position = UDim2.new(1, -50, 0, 10)
+	enableToggle.BackgroundColor3 = _G.OutfitRandomizerSettings.Enabled and Color3.fromRGB(200, 30, 30) or Color3.fromRGB(70, 0, 0)
+	enableToggle.ZIndex = 3
+	enableToggle.Parent = contentFrame
+
+	local toggleIndicator = Instance.new("Frame")
+	toggleIndicator.Name = "Indicator"
+	toggleIndicator.Size = UDim2.new(0, 16, 0, 16)
+	toggleIndicator.Position = UDim2.new(_G.OutfitRandomizerSettings.Enabled and 0.6 or 0.1, 0, 0.5, -8)
+	toggleIndicator.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	toggleIndicator.ZIndex = 4
+	toggleIndicator.Parent = enableToggle
+
+	local toggleCorner = Instance.new("UICorner")
+	toggleCorner.CornerRadius = UDim.new(0, 10)
+	toggleCorner.Parent = enableToggle
+
+	local indicatorCorner = Instance.new("UICorner")
+	indicatorCorner.CornerRadius = UDim.new(0, 8)
+	indicatorCorner.Parent = toggleIndicator
+
+	local toggleText = Instance.new("TextLabel")
+	toggleText.Name = "EnableText"
+	toggleText.Size = UDim2.new(0, 100, 0, 20)
+	toggleText.Position = UDim2.new(0, 10, 0, 10)
+	toggleText.Font = Enum.Font.Gotham
+	toggleText.Text = "Enable Randomizer"
+	toggleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toggleText.TextSize = 14
+	toggleText.TextXAlignment = Enum.TextXAlignment.Left
+	toggleText.BackgroundTransparency = 1
+	toggleText.ZIndex = 3
+	toggleText.Parent = contentFrame
+
+	local rigTypeText = Instance.new("TextLabel")
+	rigTypeText.Name = "RigTypeText"
+	rigTypeText.Size = UDim2.new(0, 100, 0, 20)
+	rigTypeText.Position = UDim2.new(0, 10, 0, 45)
+	rigTypeText.Font = Enum.Font.Gotham
+	rigTypeText.Text = "Rig Type:"
+	rigTypeText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	rigTypeText.TextSize = 14
+	rigTypeText.TextXAlignment = Enum.TextXAlignment.Left
+	rigTypeText.BackgroundTransparency = 1
+	rigTypeText.ZIndex = 3
+	rigTypeText.Parent = contentFrame
+
+	local r6Button = Instance.new("TextButton")
+	r6Button.Name = "R6Button"
+	r6Button.Size = UDim2.new(0, 50, 0, 25)
+	r6Button.Position = UDim2.new(0, 110, 0, 42)
+	r6Button.BackgroundColor3 = _G.OutfitRandomizerSettings.RigType == Enum.HumanoidRigType.R6 and Color3.fromRGB(200, 30, 30) or Color3.fromRGB(40, 40, 40)
+	r6Button.Text = "R6"
+	r6Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	r6Button.Font = Enum.Font.GothamBold
+	r6Button.TextSize = 14
+	r6Button.ZIndex = 3
+	r6Button.Parent = contentFrame
+
+	local r6Corner = Instance.new("UICorner")
+	r6Corner.CornerRadius = UDim.new(0, 6)
+	r6Corner.Parent = r6Button
+
+	local r15Button = Instance.new("TextButton")
+	r15Button.Name = "R15Button"
+	r15Button.Size = UDim2.new(0, 50, 0, 25)
+	r15Button.Position = UDim2.new(0, 170, 0, 42)
+	r15Button.BackgroundColor3 = _G.OutfitRandomizerSettings.RigType == Enum.HumanoidRigType.R15 and Color3.fromRGB(200, 30, 30) or Color3.fromRGB(40, 40, 40)
+	r15Button.Text = "R15"
+	r15Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	r15Button.Font = Enum.Font.GothamBold
+	r15Button.TextSize = 14
+	r15Button.ZIndex = 3
+	r15Button.Parent = contentFrame
+
+	local r15Corner = Instance.new("UICorner")
+	r15Corner.CornerRadius = UDim.new(0, 6)
+	r15Corner.Parent = r15Button
+
+	local deathToggle = Instance.new("Frame")
+	deathToggle.Name = "DeathToggle"
+	deathToggle.Size = UDim2.new(0, 40, 0, 20)
+	deathToggle.Position = UDim2.new(1, -50, 0, 80)
+	deathToggle.BackgroundColor3 = _G.OutfitRandomizerSettings.ChangeOnDeath and Color3.fromRGB(200, 30, 30) or Color3.fromRGB(70, 0, 0)
+	deathToggle.ZIndex = 3
+	deathToggle.Parent = contentFrame
+
+	local deathIndicator = Instance.new("Frame")
+	deathIndicator.Name = "Indicator"
+	deathIndicator.Size = UDim2.new(0, 16, 0, 16)
+	deathIndicator.Position = UDim2.new(_G.OutfitRandomizerSettings.ChangeOnDeath and 0.6 or 0.1, 0, 0.5, -8)
+	deathIndicator.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	deathIndicator.ZIndex = 4
+	deathIndicator.Parent = deathToggle
+
+    local deathToggleCorner = Instance.new("UICorner")
+	deathToggleCorner.CornerRadius = UDim.new(0, 10)
+	deathToggleCorner.Parent = deathToggle
+
+	local deathIndicatorCorner = Instance.new("UICorner")
+	deathIndicatorCorner.CornerRadius = UDim.new(0, 8)
+	deathIndicatorCorner.Parent = deathIndicator
+
+	local deathText = Instance.new("TextLabel")
+	deathText.Name = "DeathText"
+	deathText.Size = UDim2.new(0, 150, 0, 20)
+	deathText.Position = UDim2.new(0, 10, 0, 80)
+	deathText.Font = Enum.Font.Gotham
+	deathText.Text = "Change Outfit On Death"
+	deathText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	deathText.TextSize = 14
+	deathText.TextXAlignment = Enum.TextXAlignment.Left
+	deathText.BackgroundTransparency = 1
+	deathText.ZIndex = 3
+	deathText.Parent = contentFrame
+
+	local applyButton = Instance.new("TextButton")
+	applyButton.Name = "ApplyButton"
+	applyButton.Size = UDim2.new(0, 200, 0, 35)
+	applyButton.Position = UDim2.new(0.5, -100, 0, 115)
+	applyButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+	applyButton.Text = "Apply Random Outfit Now"
+	applyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	applyButton.Font = Enum.Font.GothamBold
+	applyButton.TextSize = 16
+	applyButton.ZIndex = 3
+	applyButton.Parent = contentFrame
+
+	local buttonGlow = Instance.new("UIStroke")
+	buttonGlow.Color = Color3.fromRGB(255, 50, 50)
+	buttonGlow.Thickness = 1.5
+	buttonGlow.Parent = applyButton
+
+	local applyCorner = Instance.new("UICorner")
+	applyCorner.CornerRadius = UDim.new(0, 8)
+	applyCorner.Parent = applyButton
+
+	local statusText = Instance.new("TextLabel")
+	statusText.Name = "Status"
+	statusText.Size = UDim2.new(1, 0, 0, 20)
+	statusText.Position = UDim2.new(0, 0, 0, 160)
+	statusText.Font = Enum.Font.Gotham
+	statusText.Text = "Status: Ready"
+	statusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+	statusText.TextSize = 14
+	statusText.TextXAlignment = Enum.TextXAlignment.Center
+	statusText.BackgroundTransparency = 1
+	statusText.ZIndex = 3
+	statusText.Parent = contentFrame
+	_G.OutfitRandomizerUI.Status = statusText
+
+	local creditsText = Instance.new("TextLabel")
+	creditsText.Name = "Credits"
+	creditsText.Size = UDim2.new(1, 0, 0, 20)
+	creditsText.Position = UDim2.new(0, 0, 1, -25)
+	creditsText.Font = Enum.Font.GothamBold
+	creditsText.Text = "Created by MZEEN"
+	creditsText.TextColor3 = Color3.fromRGB(255, 50, 50)
+	creditsText.TextSize = 14
+	creditsText.TextXAlignment = Enum.TextXAlignment.Center
+	creditsText.BackgroundTransparency = 1
+	creditsText.ZIndex = 3
+	creditsText.Parent = contentFrame
+
+	local function setupButtonEffects(button, isToggleButton)
+		local originalColor = button.BackgroundColor3
+
+		button.MouseEnter:Connect(function()
+			TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = originalColor:Lerp(Color3.fromRGB(255, 100, 100), 0.3)}):Play()
+		end)
+
+		button.MouseLeave:Connect(function()
+			TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = originalColor}):Play()
+		end)
+
+		button.MouseButton1Down:Connect(function()
+			TweenService:Create(button, TweenInfo.new(0.1), {BackgroundColor3 = originalColor:Lerp(Color3.fromRGB(50, 0, 0), 0.3)}):Play()
+		end)
+
+		button.MouseButton1Up:Connect(function()
+			TweenService:Create(button, TweenInfo.new(0.1), {BackgroundColor3 = originalColor:Lerp(Color3.fromRGB(255, 100, 100), 0.3)}):Play()
+		end)
+	end
+
+	setupButtonEffects(closeButton)
+	setupButtonEffects(r6Button)
+	setupButtonEffects(r15Button)
+	setupButtonEffects(applyButton)
+
+	closeButton.MouseButton1Click:Connect(function()
+		screenGui.Enabled = false
+		_G.OutfitRandomizerSettings.GuiVisible = false
+	end)
+
+	enableToggle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			_G.OutfitRandomizerSettings.Enabled = not _G.OutfitRandomizerSettings.Enabled
+
+			local targetPosition = _G.OutfitRandomizerSettings.Enabled and 0.6 or 0.1
+			local targetColor = _G.OutfitRandomizerSettings.Enabled and Color3.fromRGB(200, 30, 30) or Color3.fromRGB(70, 0, 0)
+
+			TweenService:Create(toggleIndicator, TweenInfo.new(0.2), {Position = UDim2.new(targetPosition, 0, 0.5, -8)}):Play()
+			TweenService:Create(enableToggle, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
+
+			statusText.Text = "Status: Randomizer " .. (_G.OutfitRandomizerSettings.Enabled and "Enabled" or "Disabled")
+		end
+	end)
+
+	r6Button.MouseButton1Click:Connect(function()
+		_G.OutfitRandomizerSettings.RigType = Enum.HumanoidRigType.R6
+
+		r6Button.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+		r15Button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+
+		setupButtonEffects(r6Button)
+		setupButtonEffects(r15Button)
+
+		statusText.Text = "Status: Rig type set to R6"
+	end)
+
+	r15Button.MouseButton1Click:Connect(function()
+		_G.OutfitRandomizerSettings.RigType = Enum.HumanoidRigType.R15
+
+		r15Button.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+		r6Button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+
+		setupButtonEffects(r6Button)
+		setupButtonEffects(r15Button)
+
+		statusText.Text = "Status: Rig type set to R15"
+	end)
+
+	deathToggle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			_G.OutfitRandomizerSettings.ChangeOnDeath = not _G.OutfitRandomizerSettings.ChangeOnDeath
+
+			local targetPosition = _G.OutfitRandomizerSettings.ChangeOnDeath and 0.6 or 0.1
+			local targetColor = _G.OutfitRandomizerSettings.ChangeOnDeath and Color3.fromRGB(200, 30, 30) or Color3.fromRGB(70, 0, 0)
+
+			TweenService:Create(deathIndicator, TweenInfo.new(0.2), {Position = UDim2.new(targetPosition, 0, 0.5, -8)}):Play()
+			TweenService:Create(deathToggle, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
+
+			statusText.Text = "Status: Change on death " .. (_G.OutfitRandomizerSettings.ChangeOnDeath and "Enabled" or "Disabled")
+
+			if _G.OutfitRandomizerSettings.ChangeOnDeath and LocalPlayer.Character then
+				setupDiedEvent(LocalPlayer.Character)
+			end
+		end
+	end)
+
+	applyButton.MouseButton1Click:Connect(function()
+		statusText.Text = "Status: Applying random outfit..."
+		applyRandomOutfit()
+	end)
+
+	local dragging = false
+	local dragInput
+	local dragStart
+	local startPos
+
+	titleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPos = mainFrame.Position
+		end
+	end)
+
+	titleBar.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+			_G.OutfitRandomizerSettings.GuiPosition = mainFrame.Position
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			local delta = input.Position - dragStart
+			mainFrame.Position = UDim2.new(
+				startPos.X.Scale, 
+				startPos.X.Offset + delta.X, 
+				startPos.Y.Scale, 
+				startPos.Y.Offset + delta.Y
+			)
+			_G.OutfitRandomizerSettings.GuiPosition = mainFrame.Position
+		end
+	end)
+
+	titleBar.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			dragInput = input
+		end
+	end)
+
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not gameProcessed and input.KeyCode == Enum.KeyCode.P then
+			screenGui.Enabled = not screenGui.Enabled
+			_G.OutfitRandomizerSettings.GuiVisible = screenGui.Enabled
+		end
+	end)
+
+	return {
+		ScreenGui = screenGui, 
+		MainFrame = mainFrame,
+		Status = statusText
+	}
+end
+
+local guiElements = createGUI()
+_G.OutfitRandomizerUI = guiElements
+
+if LocalPlayer.Character then
+	setupDiedEvent(LocalPlayer.Character)
+end
+
+LocalPlayer.CharacterAdded:Connect(setupDiedEvent)
+
+if _G.OutfitRandomizerSettings.Enabled then
+	task.wait(1)
+	applyRandomOutfit()
+end
+
+print("Random Outfit Changer by MZEEN has been loaded!")
+print("Press P to toggle the GUI")
