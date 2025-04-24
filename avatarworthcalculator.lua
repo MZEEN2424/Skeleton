@@ -115,7 +115,7 @@ local function GetAssetDetails(assetId)
     local success, data = SafeHttpRequest(apiUrl)
     
     if success and data and data.data and #data.data > 0 then
-        local itemDetails = data.data[0] or data.data[1] -- Some APIs are 0-indexed, some are 1-indexed
+        local itemDetails = data.data[0] or data.data[1]
 
         if itemDetails and tostring(itemDetails.id) == tostring(assetId) then
             return itemDetails
@@ -196,7 +196,7 @@ local function GetAssetPriceFromAPI(assetId)
     return 0, false
 end
 
-local limitedItemPriceCache = {} -- assetId -> price
+local limitedItemPriceCache = {}
 
 local function GetLimitedItemRAP(assetId)
     local cached = limitedItemPriceCache[assetId]
@@ -246,8 +246,7 @@ function GetLowestLimitedPrice(assetId)
 end
 
 local function GetAvatarWorth(userId)
-    -- Check cache first
-    if avatarWorthCache[userId] and avatarWorthCache[userId].timestamp > os.time() - 300 then -- Cache for 5 minutes
+    if avatarWorthCache[userId] and avatarWorthCache[userId].timestamp > os.time() - 300 then
         return avatarWorthCache[userId].worth
     end
 
